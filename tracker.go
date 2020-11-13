@@ -97,9 +97,9 @@ func main() {
 		return
 	}
 
-	for n := 0; n < len(modfile.Patterns); n++ {
-		fmt.Printf("Pattern %v.....\n", n)
-		modfile.Patterns[n].Print()
+	for _, val := range modfile.Table {
+		fmt.Printf("Pattern %v.....\n", val)
+		modfile.Patterns[val].Print()
 	}
 
 	modfile.Print()
@@ -123,13 +123,7 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 
 	switch format {
 
-	case "M.K.":
-		fallthrough
-	case "FLT4":
-		fallthrough
-	case "M!K!":
-		fallthrough
-	case "4CHN":
+	case "M.K.", "FLT4", "M!K!", "4CHN":
 		channels = 4
 		instruments = 32			// Including the abstract instrument 0
 
@@ -137,13 +131,7 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 		channels = 6
 		instruments = 32
 
-	case "OCTA":
-		fallthrough
-	case "FLT8":
-		fallthrough
-	case "CD81":
-		fallthrough
-	case "8CHN":
+	case "OCTA", "FLT8", "CD81", "8CHN":
 		channels = 8
 		instruments = 32
 
@@ -317,6 +305,9 @@ func load_sample_info(infile *bufio.Reader, min_length_is_1 bool) (*Sample, erro
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
 	sample.Finetune = int(finetune)
+	if sample.Finetune > 7 {			// It's a signed 4-bit value...
+		sample.Finetune -= 16			// Therefore 8 means -8, 9 means -7, etc (hope I have this right)
+	}
 
 	volume, err := infile.ReadByte()
 	if err != nil {
