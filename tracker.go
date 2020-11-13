@@ -27,8 +27,9 @@ type Pattern struct {
 
 type Note struct {
 	Sample			int
-	Period			int
+	Period			int				// This determines the pitch, I think
 	Effect			int
+	Parameter		int
 }
 
 type Modfile struct {
@@ -75,7 +76,6 @@ func main() {
 	}
 
 	f, err := os.Open(os.Args[1])
-
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		return
@@ -125,6 +125,10 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 
 	case "OCTA":
 		fallthrough
+	case "FLT8":
+		fallthrough
+	case "CD81":
+		fallthrough
 	case "8CHN":
 		channels = 8
 		instruments = 32
@@ -132,7 +136,7 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 	default:
 		channels = 4
 		instruments = 16
-		format = "...."
+		format = ""
 	}
 
 	return format, channels, instruments, err
@@ -157,7 +161,7 @@ func loadmod(f *os.File) (*Modfile, error) {
 
 	modfile.Title, err = load_string(infile, 20)
 	if err != nil {
-		return nil, err
+		return modfile, err
 	}
 
 	// -----
@@ -168,9 +172,9 @@ func loadmod(f *os.File) (*Modfile, error) {
 
 		var sample *Sample
 
-		sample, err = load_sample_info(infile)
+		sample, err = load_sample_info(infile, modfile.Format == "")
 		if err != nil {
-			return nil, err
+			return modfile, err
 		}
 
 		modfile.Samples = append(modfile.Samples, sample)
@@ -180,14 +184,14 @@ func loadmod(f *os.File) (*Modfile, error) {
 
 	positions, err := infile.ReadByte()		// How long the useful part of the table is (I think)
 	if err != nil {
-		return nil, err
+		return modfile, err
 	}
 
 	// -----
 
 	_, err = infile.ReadByte()				// Can "safely" ignore this byte, allegedly
 	if err != nil {
-		return nil, err
+		return modfile, err
 	}
 
 	// -----
@@ -202,7 +206,7 @@ func loadmod(f *os.File) (*Modfile, error) {
 	for n := 0; n < 128; n++ {
 		val, err := infile.ReadByte()
 		if err != nil {
-			return nil, err
+			return modfile, err
 		}
 		table_values[val] = true
 		if n < len(modfile.Table) {
@@ -223,6 +227,12 @@ func loadmod(f *os.File) (*Modfile, error) {
 
 	if len(table_values) != highest_pattern + 1 {
 		fmt.Printf("WARNING: some pattern numbers are not in the table.\n")
+	}
+
+	// -----
+
+	if modfile.Format != "" {
+		infile.ReadByte(); infile.ReadByte(); infile.ReadByte(); infile.ReadByte()
 	}
 
 	// -----
@@ -250,7 +260,7 @@ func loadmod(f *os.File) (*Modfile, error) {
 	for n := 1; n < len(modfile.Samples); n++ {
 		_, err = io.ReadFull(infile, modfile.Samples[n].Data)
 		if err != nil {
-			return nil, err
+			return modfile, err
 		}
 	}
 
@@ -268,7 +278,7 @@ func loadmod(f *os.File) (*Modfile, error) {
 }
 
 
-func load_sample_info(infile *bufio.Reader) (*Sample, error) {
+func load_sample_info(infile *bufio.Reader, min_length_is_1 bool) (*Sample, error) {
 
 	var err error
 
@@ -283,7 +293,7 @@ func load_sample_info(infile *bufio.Reader) (*Sample, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
-	if length == 0 {
+	if length == 0 && min_length_is_1 {
 		length = 1
 	}
 	sample.Data = make([]byte, length * 2)
@@ -351,5 +361,13 @@ func load_note(infile *bufio.Reader) (*Note, error) {		// TODO / FIXME
 	if err != nil {
 		return nil, fmt.Errorf("load_note: %v", err)
 	}
-	return new(Note), nil
+
+	note := new(Note)
+
+	note.Sample = int((raw[0] & 0xf0) | (raw[2] >> 4))		// Make a new byte out of left 4 bits of 1st byte and left 4 bits of 3rd byte
+	note.Period = 256 * int(raw[0] & 0x0f) + int(raw[1])	// A 12-bit value comprised of the right 4 bits of 1st byte and all the 2nd byte
+	note.Effect = int(raw[2] & 0x0f)						// Value in range 0-15, from the right 4 bits of 3rd byte
+	note.Parameter = int(raw[3])							// The 4th byte
+
+	return note, nil
 }
