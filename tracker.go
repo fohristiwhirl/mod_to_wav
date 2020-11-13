@@ -25,6 +25,16 @@ type Pattern struct {
 	Lines			[][]*Note
 }
 
+func (self *Pattern) Print() {
+	for i := 0; i < len(self.Lines); i++ {
+		fmt.Printf("| ")
+		for ch := 0; ch < len(self.Lines[i]); ch++ {
+			fmt.Printf("%3v - %3v |", self.Lines[i][ch].Sample, self.Lines[i][ch].Period)
+		}
+		fmt.Printf("\n")
+	}
+}
+
 type Note struct {
 	Sample			int
 	Period			int				// This determines the pitch, I think
@@ -89,6 +99,10 @@ func main() {
 
 	modfile.Print()
 
+	for n := 0; n < len(modfile.Patterns); n++ {
+		fmt.Printf("Pattern %v.....\n", n)
+		modfile.Patterns[n].Print()
+	}
 }
 
 
