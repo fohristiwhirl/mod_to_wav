@@ -8,17 +8,41 @@ import (
 	"strings"
 )
 
-type Sample struct {
-	Name			string
-	Finetune		int
-	Volume			int
-	RepOffset		int
-	RepLength		int
-	Data			[]byte
+type Modfile struct {
+	Title			string
+	Format			string
+	ChannelCount	int
+	SampleCount		int
+	Table			[]int
+	Samples			[]*Sample
+	Patterns		[]*Pattern
+	Unread			int
 }
 
-func (self *Sample) String() string {
-	return fmt.Sprintf("%22v (%5v bytes) - ft %v, v %v, rep %v %v", self.Name, len(self.Data), self.Finetune, self.Volume, self.RepOffset, self.RepLength)
+func (self *Modfile) Print() {
+
+	fmt.Printf("\n")
+	fmt.Printf("Title: \"%v\" (format: %s)\n", self.Title, self.Format)
+	fmt.Printf("\n")
+
+	sample_length_sum := 0
+
+	for n := 1; n < len(self.Samples); n++ {
+		self.Samples[n].Print()
+		sample_length_sum += len(self.Samples[n].Data)
+	}
+
+	fmt.Printf("\n")
+	fmt.Printf("%v bytes of sample data\n", sample_length_sum)
+
+	fmt.Printf("Table:")
+	for n := 0; n < len(self.Table); n++ {
+		fmt.Printf(" %v", self.Table[n])
+	}
+	fmt.Printf("\n")
+
+	fmt.Printf("%v unread bytes\n", self.Unread)
+	fmt.Printf("\n")
 }
 
 type Pattern struct {
@@ -42,42 +66,20 @@ type Note struct {
 	Parameter		int
 }
 
-type Modfile struct {
-	Title			string
-	Format			string
-	ChannelCount	int
-	SampleCount		int
-	Table			[]int
-	Samples			[]*Sample
-	Patterns		[]*Pattern
-	Unread			int
+type Sample struct {
+	Name			string
+	Finetune		int
+	Volume			int
+	RepOffset		int
+	RepLength		int
+	Data			[]byte
 }
 
-func (self *Modfile) Print() {
-
-	fmt.Printf("\n")
-	fmt.Printf("Title: \"%v\" (format: %s)\n", self.Title, self.Format)
-	fmt.Printf("\n")
-
-	sample_length_sum := 0
-
-	for n := 1; n < len(self.Samples); n++ {
-		fmt.Printf("%v\n", self.Samples[n])
-		sample_length_sum += len(self.Samples[n].Data)
-	}
-
-	fmt.Printf("\n")
-	fmt.Printf("%v bytes of sample data\n", sample_length_sum)
-
-	fmt.Printf("Table:")
-	for n := 0; n < len(self.Table); n++ {
-		fmt.Printf(" %v", self.Table[n])
-	}
-	fmt.Printf("\n")
-
-	fmt.Printf("%v unread bytes\n", self.Unread)
-	fmt.Printf("\n")
+func (self *Sample) Print() {
+	fmt.Printf("%22v (%5v bytes) - ft %v, v %v, rep %v %v\n", self.Name, len(self.Data), self.Finetune, self.Volume, self.RepOffset, self.RepLength)
 }
+
+// --------------------------------------------------------------------------------------------------
 
 func main() {
 
