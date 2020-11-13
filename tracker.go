@@ -362,7 +362,7 @@ func load_string(infile *bufio.Reader, length int) (string, error) {
 }
 
 
-func load_note(infile *bufio.Reader) (*Note, error) {		// TODO / FIXME
+func load_note(infile *bufio.Reader) (*Note, error) {
 	raw := make([]byte, 4)
 	_, err := io.ReadFull(infile, raw)
 	if err != nil {
