@@ -97,12 +97,12 @@ func main() {
 		return
 	}
 
-	modfile.Print()
-
 	for n := 0; n < len(modfile.Patterns); n++ {
 		fmt.Printf("Pattern %v.....\n", n)
 		modfile.Patterns[n].Print()
 	}
+
+	modfile.Print()
 }
 
 
