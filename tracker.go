@@ -35,7 +35,7 @@ type Modfile struct {
 	Title			string
 	Format			string
 	ChannelCount	int
-	SampleCount	int
+	SampleCount		int
 	Table			[]int
 	Samples			[]*Sample
 	Patterns		[]*Pattern
