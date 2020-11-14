@@ -14,7 +14,7 @@ type Modfile struct {
 	Title			string
 	Format			string
 	ChannelCount	int
-	SampleCount		int
+	SampleCount		int				// 16 or 32 (I'm including the abstract sample 0)
 	Table			[]int
 	Samples			[]*Sample
 	Patterns		[]*Pattern
@@ -24,24 +24,18 @@ type Modfile struct {
 
 func (self *Modfile) PrintSummary() {
 
-	fmt.Printf("\n")
-	fmt.Printf("Title: \"%v\" (format: %s)\n", self.Title, self.Format)
-	fmt.Printf("\n")
-
 	sample_length_sum := 0
-
 	for n := 1; n < len(self.Samples); n++ {
 		sample_length_sum += len(self.Samples[n].Data)
 	}
 
-	fmt.Printf("%v bytes of sample data\n", sample_length_sum)
-
+	fmt.Printf("\n")
+	fmt.Printf("Title: \"%v\" -- format: \"%s\" -- %v bytes of sample data\n", self.Title, self.Format, sample_length_sum)
 	fmt.Printf("Table:")
 	for n := 0; n < len(self.Table); n++ {
 		fmt.Printf(" %v", self.Table[n])
 	}
 	fmt.Printf("\n")
-
 	fmt.Printf("File size: %v (%v unread bytes)\n", self.Filesize, self.Unread)
 	fmt.Printf("\n")
 }
@@ -62,6 +56,48 @@ func (self *Modfile) PrintAll() {
 	}
 
 	fmt.Printf("\n")
+}
+
+func (self *Modfile) ExpectedFilesizes() (int64, int64) {
+
+	// Only valid to call once most metadata has been loaded.
+	// Returns 2 values:
+	//    - one for a filesize where blank samples have size 0
+	//    - one for a filesize where blank samples have size 2
+
+	const (
+		TITLE = 20
+		SAMPLEMETA = 30
+		EXTRAMETA = 2
+		TABLE = 128
+		FORMAT = 4
+		LINES = 64
+		NOTE = 4
+	)
+
+	var blank_samples int64
+
+	for _, sample := range self.Samples[1:] {
+		if sample.Length == 0 {
+			blank_samples++
+		}
+	}
+
+	var naive int64
+
+	naive += TITLE
+	naive += (SAMPLEMETA * (int64(self.SampleCount) - 1))
+	naive += EXTRAMETA + TABLE + FORMAT
+	naive += int64(self.ChannelCount) * LINES * NOTE * int64(len(self.Patterns))
+	for _, sample := range self.Samples[1:] {
+		naive += int64(sample.Length) * 2
+	}
+
+	if self.Format == "" {		// The format string (probably) won't be present.
+		naive -= 4
+	}
+
+	return naive, naive + blank_samples * 2
 }
 
 // --------------------------------------------------------------------------------------------------
@@ -97,6 +133,8 @@ type Sample struct {
 	Volume			int
 	RepOffset		int
 	RepLength		int
+
+	Length			int				// Set at the time of reading the metadata
 	Data			[]byte
 }
 
@@ -165,15 +203,15 @@ func load_modfile(f *os.File) (*Modfile, error) {
 
 	// Load sample metadata...
 
-	modfile.Samples = append(modfile.Samples, nil)		// No sample zero
+	modfile.Samples = make([]*Sample, modfile.SampleCount)
+	modfile.Samples[0] = nil		// No sample zero
 
 	for n := 1; n < modfile.SampleCount; n++ {
-		var sample *Sample
-		sample, err = load_sample_info(infile, modfile.Format == "")
+		sample, err := load_sample_info(infile)
 		if err != nil {
 			return modfile, err
 		}
-		modfile.Samples = append(modfile.Samples, sample)
+		modfile.Samples[n] = sample
 	}
 
 	// Load position count, which is how long the useful part of the table is (I think)...
@@ -249,9 +287,25 @@ func load_modfile(f *os.File) (*Modfile, error) {
 		}
 	}
 
+	// With all metadata loaded, we can now calculate an expected filesize...
+
+	small_filesize, large_filesize := modfile.ExpectedFilesizes()
+
+	if small_filesize != modfile.Filesize && large_filesize != modfile.Filesize {
+		return modfile, fmt.Errorf("Filesize was %v, expected %v or %v", modfile.Filesize, small_filesize, large_filesize)
+	}
+
 	// Load the samples...
 
 	for n := 1; n < len(modfile.Samples); n++ {
+
+		// Apply a correction for length-2 blank samples...
+
+		if modfile.Samples[n].Length == 0 && modfile.Filesize == large_filesize {
+			modfile.Samples[n].Length = 1
+		}
+
+		modfile.Samples[n].Data = make([]byte, modfile.Samples[n].Length * 2)
 		_, err = io.ReadFull(infile, modfile.Samples[n].Data)
 		if err != nil {
 			return modfile, err
@@ -285,7 +339,7 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 
 	case "M.K.", "FLT4", "M!K!", "4CHN":
 		channels = 4
-		instruments = 32			// Including the abstract instrument 0
+		instruments = 32
 
 	case "6CHN":
 		channels = 6
@@ -305,7 +359,7 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 }
 
 
-func load_sample_info(infile *bufio.Reader, min_length_is_1 bool) (*Sample, error) {
+func load_sample_info(infile *bufio.Reader) (*Sample, error) {
 
 	var err error
 
@@ -316,14 +370,10 @@ func load_sample_info(infile *bufio.Reader, min_length_is_1 bool) (*Sample, erro
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
 
-	length, err := load_big_endian_16(infile)
+	sample.Length, err = load_big_endian_16(infile)
 	if err != nil {
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
-	if length == 0 && min_length_is_1 {
-		length = 1
-	}
-	sample.Data = make([]byte, length * 2)
 
 	finetune, err := infile.ReadByte()
 	if err != nil {
@@ -340,17 +390,15 @@ func load_sample_info(infile *bufio.Reader, min_length_is_1 bool) (*Sample, erro
 	}
 	sample.Volume = int(volume)
 
-	repoffset, err := load_big_endian_16(infile)
+	sample.RepOffset, err = load_big_endian_16(infile)
 	if err != nil {
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
-	sample.RepOffset = int(repoffset)
 
-	replength, err := load_big_endian_16(infile)
+	sample.RepLength, err = load_big_endian_16(infile)
 	if err != nil {
 		return nil, fmt.Errorf("load_sample_info: %v", err)
 	}
-	sample.RepLength = int(replength)
 
 	return sample, nil
 }
