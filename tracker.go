@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// --------------------------------------------------------------------------------------------------
+
 type Modfile struct {
 	Title			string
 	Format			string
@@ -16,10 +18,11 @@ type Modfile struct {
 	Table			[]int
 	Samples			[]*Sample
 	Patterns		[]*Pattern
+	Filesize		int64
 	Unread			int
 }
 
-func (self *Modfile) Print() {
+func (self *Modfile) PrintSummary() {
 
 	fmt.Printf("\n")
 	fmt.Printf("Title: \"%v\" (format: %s)\n", self.Title, self.Format)
@@ -28,11 +31,9 @@ func (self *Modfile) Print() {
 	sample_length_sum := 0
 
 	for n := 1; n < len(self.Samples); n++ {
-		self.Samples[n].Print()
 		sample_length_sum += len(self.Samples[n].Data)
 	}
 
-	fmt.Printf("\n")
 	fmt.Printf("%v bytes of sample data\n", sample_length_sum)
 
 	fmt.Printf("Table:")
@@ -41,9 +42,29 @@ func (self *Modfile) Print() {
 	}
 	fmt.Printf("\n")
 
-	fmt.Printf("%v unread bytes\n", self.Unread)
+	fmt.Printf("File size: %v (%v unread bytes)\n", self.Filesize, self.Unread)
 	fmt.Printf("\n")
 }
+
+func (self *Modfile) PrintAll() {
+
+	fmt.Printf("\n")
+
+	for _, val := range self.Table {
+		fmt.Printf("Pattern %v.....\n", val)
+		self.Patterns[val].Print()
+	}
+
+	self.PrintSummary()
+
+	for n := 1; n < len(self.Samples); n++ {
+		self.Samples[n].Print()
+	}
+
+	fmt.Printf("\n")
+}
+
+// --------------------------------------------------------------------------------------------------
 
 type Pattern struct {
 	Lines			[][]*Note
@@ -59,12 +80,16 @@ func (self *Pattern) Print() {
 	}
 }
 
+// --------------------------------------------------------------------------------------------------
+
 type Note struct {
 	Sample			int
 	Period			int				// This determines the pitch, I think
 	Effect			int
 	Parameter		int
 }
+
+// --------------------------------------------------------------------------------------------------
 
 type Sample struct {
 	Name			string
@@ -93,28 +118,161 @@ func main() {
 		return
 	}
 
-	modfile, err := loadmod(f)
+	modfile, err := load_modfile(f)
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		return
 	}
 
-	for _, val := range modfile.Table {
-		fmt.Printf("Pattern %v.....\n", val)
-		modfile.Patterns[val].Print()
+	modfile.PrintAll()
+}
+
+
+func load_modfile(f *os.File) (*Modfile, error) {
+
+	var err error
+
+	modfile := new(Modfile)
+
+	// Make a note of the file's size...
+
+	stats, err := f.Stat()
+	if err != nil {
+		return modfile, err
+	}
+	modfile.Filesize = stats.Size()
+
+	// Search for known file formats at location 1080 (decimal)...
+
+	_, err = f.Seek(1080, 0)
+	if err != nil {
+		return modfile, err
 	}
 
-	modfile.Print()
+	modfile.Format, modfile.ChannelCount, modfile.SampleCount, err = get_format(f)
+	f.Seek(0, 0)
+
+	// We'll start using buffered IO after these seek shennanigans...
+
+	infile := bufio.NewReader(f)
+
+	// Load title...
+
+	modfile.Title, err = load_string(infile, 20)
+	if err != nil {
+		return modfile, err
+	}
+
+	// Load sample metadata...
+
+	modfile.Samples = append(modfile.Samples, nil)		// No sample zero
+
+	for n := 1; n < modfile.SampleCount; n++ {
+		var sample *Sample
+		sample, err = load_sample_info(infile, modfile.Format == "")
+		if err != nil {
+			return modfile, err
+		}
+		modfile.Samples = append(modfile.Samples, sample)
+	}
+
+	// Load position count, which is how long the useful part of the table is (I think)...
+
+	positions, err := infile.ReadByte()
+	if err != nil {
+		return modfile, err
+	}
+
+	// Load an irrelevant byte that we "can safely ignore" allegedly...
+
+	_, err = infile.ReadByte()
+	if err != nil {
+		return modfile, err
+	}
+
+	// Load the table of patterns to play (always 128 long regardless of actual song length)...
+
+	modfile.Table = make([]int, positions)
+
+	highest_pattern := 0
+	table_values := make(map[byte]bool)
+
+	patterns_exceed_table_length := false
+
+	for n := 0; n < 128; n++ {
+		val, err := infile.ReadByte()
+		if err != nil {
+			return modfile, err
+		}
+		table_values[val] = true
+		if n < len(modfile.Table) {
+			modfile.Table[n] = int(val)
+			if int(val) > highest_pattern {
+				highest_pattern = int(val)
+			}
+		} else if val != 0 {
+			patterns_exceed_table_length = true
+		}
+	}
+
+	if patterns_exceed_table_length {
+		fmt.Printf("WARNING: patterns continue in the table past its expected length.\n")
+	}
+
+	if len(table_values) != highest_pattern + 1 {
+		fmt.Printf("WARNING: some pattern numbers are not in the table.\n")
+	}
+
+	// If the file was found to have a 4 byte format string, skip past it...
+
+	if modfile.Format != "" {
+		infile.ReadByte(); infile.ReadByte(); infile.ReadByte(); infile.ReadByte()
+	}
+
+	// Load the pattern data...
+
+	modfile.Patterns = make([]*Pattern, highest_pattern + 1)
+
+	for n := 0; n < len(modfile.Patterns); n++ {
+		modfile.Patterns[n] = new(Pattern)
+		modfile.Patterns[n].Lines = make([][]*Note, 64)			// Always 64 lines in a pattern
+		for i := 0; i < 64; i++ {
+			modfile.Patterns[n].Lines[i] = make([]*Note, modfile.ChannelCount)
+		}
+	}
+
+	for n := 0; n < len(modfile.Patterns); n++ {				// For each pattern...
+		for i := 0; i < 64; i++ {								// For each line...
+			for ch := 0; ch < modfile.ChannelCount; ch++ {		// For each channel...
+				modfile.Patterns[n].Lines[i][ch], err = load_note(infile)
+			}
+		}
+	}
+
+	// Load the samples...
+
+	for n := 1; n < len(modfile.Samples); n++ {
+		_, err = io.ReadFull(infile, modfile.Samples[n].Data)
+		if err != nil {
+			return modfile, err
+		}
+	}
+
+	// Count any unread bytes (there must be a better way, but remember we are using buffered IO)...
+
+	for {
+		_, err := infile.ReadByte()
+		if err != nil {
+			break
+		}
+		modfile.Unread++
+	}
+
+	return modfile, nil
 }
 
 
 func get_format(f *os.File) (format string, channels int, instruments int, err error) {
-
-	_, err = f.Seek(1080, 0)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	defer f.Seek(0, 0)
 
 	tmp := make([]byte, 4)
 	_, err = io.ReadFull(f, tmp)
@@ -144,141 +302,6 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 	}
 
 	return format, channels, instruments, err
-}
-
-
-func loadmod(f *os.File) (*Modfile, error) {
-
-	var err error
-
-	modfile := new(Modfile)
-
-	// Search for known file formats at location 1080 (decimal)
-
-	modfile.Format, modfile.ChannelCount, modfile.SampleCount, err = get_format(f)
-
-	// We'll start using buffered IO after get_format(), which uses seek
-
-	infile := bufio.NewReader(f)
-
-	// -----
-
-	modfile.Title, err = load_string(infile, 20)
-	if err != nil {
-		return modfile, err
-	}
-
-	// -----
-
-	modfile.Samples = append(modfile.Samples, nil)		// No sample zero
-
-	for n := 1; n < modfile.SampleCount; n++ {
-
-		var sample *Sample
-
-		sample, err = load_sample_info(infile, modfile.Format == "")
-		if err != nil {
-			return modfile, err
-		}
-
-		modfile.Samples = append(modfile.Samples, sample)
-	}
-
-	// -----
-
-	positions, err := infile.ReadByte()		// How long the useful part of the table is (I think)
-	if err != nil {
-		return modfile, err
-	}
-
-	// -----
-
-	_, err = infile.ReadByte()				// Can "safely" ignore this byte, allegedly
-	if err != nil {
-		return modfile, err
-	}
-
-	// -----
-
-	modfile.Table = make([]int, positions)
-
-	highest_pattern := 0
-	table_values := make(map[byte]bool)
-
-	patterns_exceed_table_length := false
-
-	for n := 0; n < 128; n++ {
-		val, err := infile.ReadByte()
-		if err != nil {
-			return modfile, err
-		}
-		table_values[val] = true
-		if n < len(modfile.Table) {
-			modfile.Table[n] = int(val)
-			if int(val) > highest_pattern {
-				highest_pattern = int(val)
-			}
-		} else if val != 0 {
-			patterns_exceed_table_length = true
-		}
-	}
-
-	// -----
-
-	if patterns_exceed_table_length {
-		fmt.Printf("WARNING: patterns continue in the table past its expected length.\n")
-	}
-
-	if len(table_values) != highest_pattern + 1 {
-		fmt.Printf("WARNING: some pattern numbers are not in the table.\n")
-	}
-
-	// -----
-
-	if modfile.Format != "" {
-		infile.ReadByte(); infile.ReadByte(); infile.ReadByte(); infile.ReadByte()
-	}
-
-	// -----
-
-	modfile.Patterns = make([]*Pattern, highest_pattern + 1)
-
-	for n := 0; n < len(modfile.Patterns); n++ {
-		modfile.Patterns[n] = new(Pattern)
-		modfile.Patterns[n].Lines = make([][]*Note, 64)
-		for i := 0; i < 64; i++ {
-			modfile.Patterns[n].Lines[i] = make([]*Note, modfile.ChannelCount)
-		}
-	}
-
-	for n := 0; n < len(modfile.Patterns); n++ {				// For each pattern...
-		for i := 0; i < 64; i++ {								// For each line...
-			for ch := 0; ch < modfile.ChannelCount; ch++ {		// For each channel...
-				modfile.Patterns[n].Lines[i][ch], err = load_note(infile)
-			}
-		}
-	}
-
-	// -----
-
-	for n := 1; n < len(modfile.Samples); n++ {
-		_, err = io.ReadFull(infile, modfile.Samples[n].Data)
-		if err != nil {
-			return modfile, err
-		}
-	}
-
-	// -----
-
-	for {
-		_, err := infile.ReadByte()
-		if err != nil {
-			break
-		}
-		modfile.Unread++
-	}
-
-	return modfile, nil
 }
 
 
