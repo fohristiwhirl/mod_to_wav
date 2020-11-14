@@ -58,48 +58,6 @@ func (self *Modfile) PrintAll() {
 	fmt.Printf("\n")
 }
 
-func (self *Modfile) ExpectedFilesizes() (int64, int64) {
-
-	// Only valid to call once most metadata has been loaded.
-	// Returns 2 values:
-	//    - one for a filesize where blank samples have size 0
-	//    - one for a filesize where blank samples have size 2
-
-	const (
-		TITLE = 20
-		SAMPLEMETA = 30
-		EXTRAMETA = 2
-		TABLE = 128
-		FORMAT = 4
-		LINES = 64
-		NOTE = 4
-	)
-
-	var blank_samples int64
-
-	for _, sample := range self.Samples[1:] {
-		if sample.Length == 0 {
-			blank_samples++
-		}
-	}
-
-	var naive int64
-
-	naive += TITLE
-	naive += (SAMPLEMETA * (int64(self.SampleCount) - 1))
-	naive += EXTRAMETA + TABLE + FORMAT
-	naive += int64(self.ChannelCount) * LINES * NOTE * int64(len(self.Patterns))
-	for _, sample := range self.Samples[1:] {
-		naive += int64(sample.Length) * 2
-	}
-
-	if self.Format == "" {		// The format string (probably) won't be present.
-		naive -= 4
-	}
-
-	return naive, naive + blank_samples * 2
-}
-
 // --------------------------------------------------------------------------------------------------
 
 type Pattern struct {
@@ -289,7 +247,7 @@ func load_modfile(f *os.File) (*Modfile, error) {
 
 	// With all metadata loaded, we can now calculate an expected filesize...
 
-	small_filesize, large_filesize := modfile.ExpectedFilesizes()
+	small_filesize, large_filesize := expected_filesizes(modfile)
 
 	if small_filesize != modfile.Filesize && large_filesize != modfile.Filesize {
 		return modfile, fmt.Errorf("Filesize was %v, expected %v or %v", modfile.Filesize, small_filesize, large_filesize)
@@ -299,10 +257,10 @@ func load_modfile(f *os.File) (*Modfile, error) {
 
 	for n := 1; n < len(modfile.Samples); n++ {
 
-		// Apply a correction for length-2 blank samples...
+		// Apply a correction for blank samples having length 1 (meaning 2 bytes)...
 
 		if modfile.Samples[n].Length == 0 && modfile.Filesize == large_filesize {
-			modfile.Samples[n].Length = 1
+			modfile.Samples[n].Length = 1		// Gets doubled, below
 		}
 
 		modfile.Samples[n].Data = make([]byte, modfile.Samples[n].Length * 2)
@@ -356,6 +314,49 @@ func get_format(f *os.File) (format string, channels int, instruments int, err e
 	}
 
 	return format, channels, instruments, err
+}
+
+
+func expected_filesizes(modfile *Modfile) (int64, int64) {
+
+	// Only valid to call once most metadata has been loaded.
+	// Returns 2 values:
+	//    - one for a filesize where blank samples have size 0
+	//    - one for a filesize where blank samples have size 2
+
+	const (
+		TITLE = 20
+		SAMPLEMETA = 30
+		EXTRAMETA = 2
+		TABLE = 128
+		FORMAT = 4
+		LINES = 64
+		NOTE = 4
+	)
+
+	var blank_samples int64
+
+	for _, sample := range modfile.Samples[1:] {
+		if sample.Length == 0 {
+			blank_samples++
+		}
+	}
+
+	var naive int64
+
+	naive += TITLE
+	naive += (SAMPLEMETA * (int64(modfile.SampleCount) - 1))
+	naive += EXTRAMETA + TABLE + FORMAT
+	naive += int64(modfile.ChannelCount) * LINES * NOTE * int64(len(modfile.Patterns))
+	for _, sample := range modfile.Samples[1:] {
+		naive += int64(sample.Length) * 2
+	}
+
+	if modfile.Format == "" {		// The format string (probably) won't be present.
+		naive -= 4
+	}
+
+	return naive, naive + blank_samples * 2
 }
 
 
