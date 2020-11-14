@@ -15,7 +15,7 @@ type Modfile struct {
 	Format			string
 	ChannelCount	int
 	SampleCount		int				// 16 or 32 (I'm including the abstract sample 0)
-	Table			[]int
+	Table			[]int			// Will be the required size only, not 128
 	Samples			[]*Sample
 	Patterns		[]*Pattern
 	Filesize		int64
@@ -83,6 +83,14 @@ type Note struct {
 	Parameter		int
 }
 
+func (self *Note) ParameterLeft() int {
+	return self.Parameter >> 4
+}
+
+func (self *Note) ParameterRight() int {
+	return self.Parameter & 0x0f
+}
+
 // --------------------------------------------------------------------------------------------------
 
 type Sample struct {
@@ -92,13 +100,21 @@ type Sample struct {
 	RepOffset		int
 	RepLength		int
 
-	Length			int				// Set at the time of reading the metadata
-	Data			[]byte
+	Length			int				// In "words" - set at the time of reading the metadata
+	Data			[]byte			// Twice the nominal "length"
 }
 
 func (self *Sample) Print() {
 	fmt.Printf("%22v (%5v bytes) - ft %v, v %v, rep %v %v\n", self.Name, len(self.Data), self.Finetune, self.Volume, self.RepOffset, self.RepLength)
 }
+
+// --------------------------------------------------------------------------------------------------
+
+const (
+	POSITION_JUMP = 11
+	PATTERN_BREAK = 13
+	SET_SPEED = 15
+)
 
 // --------------------------------------------------------------------------------------------------
 
@@ -121,6 +137,8 @@ func main() {
 	}
 
 	modfile.PrintAll()
+
+	generate_waveform(modfile)
 }
 
 
@@ -449,4 +467,117 @@ func load_note(infile *bufio.Reader) (*Note, error) {
 	note.Parameter = int(raw[3])							// The 4th byte
 
 	return note, nil
+}
+
+// --------------------------------------------------------------------------------------------------
+
+func generate_waveform(modfile *Modfile) {
+
+	// TODO. To start with, lets do channel 0...
+
+	var waveform []byte
+
+	ticks_per_line := 6										// A tick is 1/50 seconds? = 882 samples at 44100 Hz
+	next_ticks_per_line := 6
+
+	table_index := 0
+	current_pattern := modfile.Patterns[modfile.Table[0]]
+	linenum := 0
+	tick := 0
+
+	position_jump_happening := false
+	position_jump_arg := 0
+
+	pattern_break_happening := false
+	pattern_break_arg := 0
+
+	for {
+
+		waveform = append(waveform, make([]byte, 882)...)
+
+		if len(waveform) > 20 * 60 * 44100 {
+			fmt.Printf("File exceeded 20 minutes, aborting!\n")
+			break
+		}
+
+		if table_index < len(modfile.Table) {
+			current_pattern = modfile.Patterns[modfile.Table[table_index]]
+		} else {
+			break
+		}
+
+		line := current_pattern.Lines[linenum]
+
+		if tick == 0 {
+
+			for _, note := range line {
+
+				if note.Effect == SET_SPEED {
+
+					val := note.Parameter
+
+					if val == 0 {
+						fmt.Printf("WARNING: ignored tickrate 0\n")
+					} else if val <= 31 {
+						next_ticks_per_line = val
+						fmt.Printf("Set tickrate to %v\n", next_ticks_per_line)
+					} else {
+						fmt.Printf("WARNING: ignored speed %v\n", val)
+					}
+
+				}
+
+				if note.Effect == POSITION_JUMP {
+
+					if note.Parameter > table_index {
+						position_jump_happening = true
+						position_jump_arg = note.Parameter
+					}
+					fmt.Printf("While at table index %d, saw note effect %d (value %d)\n", table_index, note.Effect, note.Parameter)
+					if note.Parameter <= table_index {
+						fmt.Printf("(but ignored due to probable infinite loop)\n")
+					}
+				}
+
+				if note.Effect == PATTERN_BREAK {
+					pattern_break_happening = true
+					pattern_break_arg = note.ParameterLeft() * 10 + note.ParameterRight()				// wat
+					fmt.Printf("While at table index %d, saw note effect %d (value %d)\n", table_index, note.Effect, pattern_break_arg)
+				}
+			}
+		}
+
+		// -----
+
+		tick++
+
+		if tick >= ticks_per_line {
+
+			tick = 0
+			linenum++
+			ticks_per_line = next_ticks_per_line
+
+			if pattern_break_happening {
+				table_index += 1
+				linenum = pattern_break_arg
+				pattern_break_happening = false
+				position_jump_happening = false
+			}
+
+			if position_jump_happening {				// Can create infinite loops?
+				table_index = position_jump_arg
+				linenum = 0								// Presumably?
+				pattern_break_happening = false
+				position_jump_happening = false
+			}
+		}
+
+		if linenum >= 64 {
+			linenum = 0
+			table_index += 1
+		}
+
+	}
+
+	fmt.Printf("%v bytes (%d seconds)", len(waveform), len(waveform) / 44100)
 }
