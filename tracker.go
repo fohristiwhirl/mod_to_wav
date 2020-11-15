@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	w "github.com/fohristiwhirl/wavmaker"
 )
 
 // --------------------------------------------------------------------------------------------------
@@ -100,12 +102,55 @@ type Sample struct {
 	RepOffset		int
 	RepLength		int
 
-	Length			int				// In "words" - set at the time of reading the metadata
+	Length			int				// In "words" - set at the time of reading the metadata; 0 or 1 are considered empty.
 	Data			[]byte			// Twice the nominal "length"
+
+	Wav				map[int]*w.WAV
 }
 
 func (self *Sample) Print() {
 	fmt.Printf("%22v (%5v bytes) - ft %v, v %v, rep %v %v\n", self.Name, len(self.Data), self.Finetune, self.Volume, self.RepOffset, self.RepLength)
+}
+
+func (self *Sample) MakeWav(period int) {
+
+	if self.Wav[period] != nil {
+		panic("Redundant MakeWav() call")
+	}
+
+	if self.Length < 2 {									// Consider size 0 or 1 to be empty
+		self.Wav[period] = w.New(0)
+		return
+	}
+
+	freq := 3563219 / uint32(period)						// How many frames of the sample are played per second
+	wav_frames := 44100 * uint32(len(self.Data)) / freq
+
+	wav := w.New(wav_frames)
+
+	self.Wav[period] = wav
+
+	// TODO: stretch to fit
+
+	set_frame_from_byte(wav, wav_frames - 1, self.Data[len(self.Data) - 1])
+
+}
+
+func set_frame_from_byte(wav *w.WAV, pos uint32, val byte) {
+
+	// Convert the byte to a 16-bit value and set both stereo channels.
+
+	val_as_int16 := int16(val)
+
+	// Since the byte is supposed to be a signed val, convert like so...
+
+	if val_as_int16 > 127 {
+		val_as_int16 -= 256
+	}
+
+	new_val := int16(val_as_int16) * 256 + int16(val_as_int16) + 128
+
+	wav.Set(pos, new_val, new_val)
 }
 
 // --------------------------------------------------------------------------------------------------
@@ -383,6 +428,7 @@ func load_sample_info(infile *bufio.Reader) (*Sample, error) {
 	var err error
 
 	sample := new(Sample)
+	sample.Wav = make(map[int]*w.WAV)
 
 	sample.Name, err = load_string(infile, 22)
 	if err != nil {
