@@ -124,21 +124,38 @@ func (self *Sample) MakeWav(period int) {
 	}
 
 	freq := 3563219 / uint32(period)						// How many frames of the sample are played per second
-	wav_frames := 44100 * uint32(len(self.Data)) / freq
+	new_frame_count := 44100 * uint32(len(self.Data)) / freq
 
-	wav := w.New(wav_frames)
+	wav := w.New(new_frame_count)
 
 	self.Wav[period] = wav
 
-	// TODO: stretch to fit
+	// Set final frame directly...
 
-	set_frame_from_byte(wav, wav_frames - 1, self.Data[len(self.Data) - 1])
+	set_frame(wav, new_frame_count - 1, byte_to_int16(self.Data[len(self.Data) - 1]))
+
+	for n := uint32(0) ; n <= new_frame_count - 2 ; n++ {
+
+		index_f := (float64(n) / float64(new_frame_count - 1)) * float64(len(self.Data) - 1)
+		index := uint32(index_f)
+
+		interpolate_fraction := index_f - float64(index)
+
+		old_val := byte_to_int16(self.Data[index])
+		old_val_next := byte_to_int16(self.Data[index] + 1)
+
+		diff := old_val_next  - old_val
+
+		new_val_f := float64(old_val)  + float64(diff)  * interpolate_fraction
+
+		new_val := int16(new_val_f)
+
+		set_frame(wav, n, new_val)
+	}
 
 }
 
-func set_frame_from_byte(wav *w.WAV, pos uint32, val byte) {
-
-	// Convert the byte to a 16-bit value and set both stereo channels.
+func byte_to_int16(val byte) int16 {		// Assuming the byte is supposed to be signed... so 127 --> +32767 but 128 --> -32768
 
 	val_as_int16 := int16(val)
 
@@ -148,9 +165,11 @@ func set_frame_from_byte(wav *w.WAV, pos uint32, val byte) {
 		val_as_int16 -= 256
 	}
 
-	new_val := int16(val_as_int16) * 256 + int16(val_as_int16) + 128
+	return int16(val_as_int16) * 256 + int16(val_as_int16) + 128
+}
 
-	wav.Set(pos, new_val, new_val)
+func set_frame(wav *w.WAV, pos uint32, val int16) {
+	wav.Set(pos, val, val)
 }
 
 // --------------------------------------------------------------------------------------------------
