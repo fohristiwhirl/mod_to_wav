@@ -582,9 +582,11 @@ func generate_wav(modfile *Modfile) *w.WAV {
 						last_sample_used[ch] = note.Sample
 					}
 					si := last_sample_used[ch]
-					modfile.Samples[si].MakeWav(note.Period)
-					source := modfile.Samples[si].Wav[note.Period]
-					wav.Add(wav_frame, source, 0, source.FrameCount(), 1.0, 0)
+					if si != 0 {
+						modfile.Samples[si].MakeWav(note.Period)
+						source := modfile.Samples[si].Wav[note.Period]
+						wav.Add(wav_frame, source, 0, source.FrameCount(), 1.0, 0)
+					}
 				}
 
 				// --------------------------------------------
