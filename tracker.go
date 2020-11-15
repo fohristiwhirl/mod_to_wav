@@ -115,7 +115,7 @@ func (self *Sample) Print() {
 func (self *Sample) MakeWav(period int) {
 
 	if self.Wav[period] != nil {
-		panic("Redundant MakeWav() call")
+		return
 	}
 
 	if self.Length < 2 {									// Consider size 0 or 1 to be empty
@@ -202,7 +202,9 @@ func main() {
 
 	modfile.PrintAll()
 
-	generate_waveform(modfile)
+	wav := generate_wav(modfile)
+
+	wav.Save(fmt.Sprintf("%s.wav", os.Args[1]))
 }
 
 
@@ -536,11 +538,12 @@ func load_note(infile *bufio.Reader) (*Note, error) {
 
 // --------------------------------------------------------------------------------------------------
 
-func generate_waveform(modfile *Modfile) {
+func generate_wav(modfile *Modfile) *w.WAV {
+
+	wav := w.New(44100 * 60 * 20)
+	wav_frame := uint32(0)
 
 	// TODO. To start with, lets do channel 0...
-
-	var waveform []byte
 
 	ticks_per_line := 6										// A tick is 1/50 seconds? = 882 samples at 44100 Hz
 	next_ticks_per_line := 6
@@ -556,14 +559,11 @@ func generate_waveform(modfile *Modfile) {
 	pattern_break_happening := false
 	pattern_break_arg := 0
 
+	last_sample_used := make([]int, modfile.ChannelCount)
+
 	for {
 
-		waveform = append(waveform, make([]byte, 882)...)
-
-		if len(waveform) > 20 * 60 * 44100 {
-			fmt.Printf("File exceeded 20 minutes, aborting!\n")
-			break
-		}
+		wav_frame += 882
 
 		if table_index < len(modfile.Table) {
 			current_pattern = modfile.Patterns[modfile.Table[table_index]]
@@ -575,7 +575,19 @@ func generate_waveform(modfile *Modfile) {
 
 		if tick == 0 {
 
-			for _, note := range line {
+			for ch, note := range line {
+
+				if note.Period != 0 {
+					if note.Sample != 0 {
+						last_sample_used[ch] = note.Sample
+					}
+					si := last_sample_used[ch]
+					modfile.Samples[si].MakeWav(note.Period)
+					source := modfile.Samples[si].Wav[note.Period]
+					wav.Add(wav_frame, source, 0, source.FrameCount(), 1.0, 0)
+				}
+
+				// --------------------------------------------
 
 				if note.Effect == SET_SPEED {
 
@@ -644,5 +656,7 @@ func generate_waveform(modfile *Modfile) {
 
 	}
 
-	fmt.Printf("%v bytes (%d seconds)", len(waveform), len(waveform) / 44100)
+	fmt.Printf("%p: %v frames (%d seconds)", wav, wav_frame, wav_frame / 44100)
+
+	return wav
 }
