@@ -585,7 +585,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 					if si != 0 {
 						modfile.Samples[si].MakeWav(note.Period)
 						source := modfile.Samples[si].Wav[note.Period]
-						wav.Add(wav_frame, source, 0, source.FrameCount(), 1.0, 0)
+						wav.Add(wav_frame, source, 0, source.FrameCount(), 0.25, 0)
 					}
 				}
 
@@ -658,7 +658,9 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 	}
 
-	fmt.Printf("%p: %v frames (%d seconds)", wav, wav_frame, wav_frame / 44100)
+	truncated := w.New(wav_frame + 220500)
 
-	return wav
+	truncated.Add(0, wav, 0, truncated.FrameCount(), 1.0, 0)
+
+	return truncated
 }
