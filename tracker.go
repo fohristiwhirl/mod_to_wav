@@ -108,6 +108,12 @@ type Sample struct {
 	Wav				map[int]*w.WAV
 }
 
+func NewSample() *Sample {
+	ret := new(Sample)
+	ret.Wav = make(map[int]*w.WAV)
+	return ret
+}
+
 func (self *Sample) Print() {
 	fmt.Printf("%22v (%5v bytes) - ft %v, v %v, rep %v %v\n", self.Name, len(self.Data), self.Finetune, self.Volume, self.RepOffset, self.RepLength)
 }
@@ -448,8 +454,7 @@ func load_sample_info(infile *bufio.Reader) (*Sample, error) {
 
 	var err error
 
-	sample := new(Sample)
-	sample.Wav = make(map[int]*w.WAV)
+	sample := NewSample()
 
 	sample.Name, err = load_string(infile, 22)
 	if err != nil {
@@ -540,13 +545,19 @@ func load_note(infile *bufio.Reader) (*Note, error) {
 
 func generate_wav(modfile *Modfile) *w.WAV {
 
-	wav := w.New(44100 * 60 * 20)
+	var wavs []*w.WAV
+
+	for ch := 0; ch < modfile.ChannelCount; ch++ {
+		wavs = append(wavs, w.New(44100 * 60 * 20))
+	}
+
 	wav_frame := uint32(0)
 
-	// TODO. To start with, lets do channel 0...
-
 	ticks_per_line := 6										// A tick is 1/50 seconds? = 882 samples at 44100 Hz
+	so_called_bpm := 125
+
 	next_ticks_per_line := 6
+	next_bpm := 125
 
 	table_index := 0
 	current_pattern := modfile.Patterns[modfile.Table[0]]
@@ -561,9 +572,13 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 	last_sample_used := make([]int, modfile.ChannelCount)
 
-	for {
+	info := func(format_string string, args ...interface{}) {
+		fmt.Printf("%2v(%2v):%2v: ", table_index, modfile.Table[table_index], linenum)
+		fmt.Printf(format_string, args...)
+		fmt.Printf("\n")
+	}
 
-		wav_frame += 882
+	for {
 
 		if table_index < len(modfile.Table) {
 			current_pattern = modfile.Patterns[modfile.Table[table_index]]
@@ -575,6 +590,13 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 		if tick == 0 {
 
+			// How long does this tick last? We use the formula from modformat.txt (rev 4)
+
+			lines_per_minute := 24.0 * float32(so_called_bpm) / float32(ticks_per_line)
+			seconds_per_line := (1.0 / lines_per_minute) * 60.0
+
+			wav_frame += uint32(44100.0 * seconds_per_line)
+
 			for ch, note := range line {
 
 				if note.Period != 0 {
@@ -585,7 +607,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 					if si != 0 {
 						modfile.Samples[si].MakeWav(note.Period)
 						source := modfile.Samples[si].Wav[note.Period]
-						wav.Add(wav_frame, source, 0, source.FrameCount(), 0.25, 0)
+						wavs[ch].Replace(wav_frame, source, 0, source.FrameCount(), 0.25, 0)
 					}
 				}
 
@@ -596,12 +618,13 @@ func generate_wav(modfile *Modfile) *w.WAV {
 					val := note.Parameter
 
 					if val == 0 {
-						fmt.Printf("WARNING: ignored tickrate 0\n")
+						info("WARNING: ignored tickrate 0")
 					} else if val <= 31 {
 						next_ticks_per_line = val
-						fmt.Printf("Set tickrate to %v\n", next_ticks_per_line)
+						info("Set tickrate to %v", next_ticks_per_line)
 					} else {
-						fmt.Printf("WARNING: ignored speed %v\n", val)
+						next_bpm = val
+						info("Set bpm to %v", next_bpm)
 					}
 
 				}
@@ -612,16 +635,16 @@ func generate_wav(modfile *Modfile) *w.WAV {
 						position_jump_happening = true
 						position_jump_arg = note.Parameter
 					}
-					fmt.Printf("While at table index %d, saw note effect %d (value %d)\n", table_index, note.Effect, note.Parameter)
+					info("Saw note effect %d (value %d)", note.Effect, note.Parameter)
 					if note.Parameter <= table_index {
-						fmt.Printf("(but ignored due to probable infinite loop)\n")
+						info("(but ignored due to probable infinite loop)")
 					}
 				}
 
 				if note.Effect == PATTERN_BREAK {
 					pattern_break_happening = true
 					pattern_break_arg = note.ParameterLeft() * 10 + note.ParameterRight()				// wat
-					fmt.Printf("While at table index %d, saw note effect %d (value %d)\n", table_index, note.Effect, pattern_break_arg)
+					info("Saw note effect %d (value %d)\n", note.Effect, pattern_break_arg)
 				}
 			}
 		}
@@ -630,11 +653,14 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 		tick++
 
+		// Until we implement effects, ticks are completely pointless, only lines (aka divisions) matter.
+
 		if tick >= ticks_per_line {
 
 			tick = 0
 			linenum++
 			ticks_per_line = next_ticks_per_line
+			so_called_bpm = next_bpm
 
 			if pattern_break_happening {
 				table_index += 1
@@ -660,7 +686,9 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 	truncated := w.New(wav_frame + 220500)
 
-	truncated.Add(0, wav, 0, truncated.FrameCount(), 1.0, 0)
+	for ch := 0; ch < len(wavs); ch++ {
+		truncated.Add(0, wavs[ch], 0, truncated.FrameCount(), 1.0, 0)
+	}
 
 	return truncated
 }
