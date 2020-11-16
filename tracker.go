@@ -553,7 +553,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 	wav_frame := uint32(0)
 
-	ticks_per_line := 6										// A tick is 1/50 seconds? = 882 samples at 44100 Hz
+	ticks_per_line := 6
 	so_called_bpm := 125
 
 	next_ticks_per_line := 6
@@ -590,12 +590,12 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 		if tick == 0 {
 
-			// How long does this tick last? We use the formula from modformat.txt (rev 4)
+			// How long does this line last? We use the formula from modformat.txt (rev 4)
 
 			lines_per_minute := 24.0 * float32(so_called_bpm) / float32(ticks_per_line)
 			seconds_per_line := (1.0 / lines_per_minute) * 60.0
 
-			wav_frame += uint32(44100.0 * seconds_per_line)
+			wav_frame += uint32(44100.0 * seconds_per_line)		// The frames this line will need.
 
 			for ch, note := range line {
 
