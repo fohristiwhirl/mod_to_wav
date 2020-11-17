@@ -98,6 +98,15 @@ func (self *Note) ParameterRight() int {
 
 // --------------------------------------------------------------------------------------------------
 
+type Channel struct {
+	Note
+	Volume			int
+	SamplePosition	uint32
+	Period			int				// Set to 0 when not playing a note.
+}
+
+// --------------------------------------------------------------------------------------------------
+
 type Sample struct {
 	Name			string
 	Finetune		int
@@ -549,9 +558,11 @@ func load_note(infile *bufio.Reader) (*Note, error) {
 func generate_wav(modfile *Modfile) *w.WAV {
 
 	var wavs []*w.WAV
+	var channels []*Channel
 
 	for ch := 0; ch < modfile.ChannelCount; ch++ {
 		wavs = append(wavs, w.New(44100 * 60 * 20))
+		channels = append(channels, new(Channel))
 	}
 
 	wav_frame := uint32(0)
@@ -565,15 +576,12 @@ func generate_wav(modfile *Modfile) *w.WAV {
 	table_index := 0
 	current_pattern := modfile.Patterns[modfile.Table[0]]
 	linenum := 0
-	tick := 0
 
 	position_jump_happening := false
 	position_jump_arg := 0
 
 	pattern_break_happening := false
 	pattern_break_arg := 0
-
-	last_sample_used := make([]int, modfile.ChannelCount)
 
 	info := func(format_string string, args ...interface{}) {
 		fmt.Printf("%2v(%2v):%2v: ", table_index, modfile.Table[table_index], linenum)
@@ -591,93 +599,116 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 		line := current_pattern.Lines[linenum]
 
-		if tick == 0 {
+		for ch, note := range line {
+			if note.Period != 0 {
+				channels[ch].Period = note.Period
+				channels[ch].SamplePosition = 0
+				if note.Sample != 0 {
+					channels[ch].Sample = note.Sample
+				}
+			}
 
-			// How long does this line last? We use the formula from modformat.txt (rev 4)
+			// --------------------------------------------
 
-			lines_per_minute := 24.0 * float32(so_called_bpm) / float32(ticks_per_line)
-			seconds_per_line := (1.0 / lines_per_minute) * 60.0
+			if note.Effect == SET_SPEED {
 
-			wav_frame += uint32(44100.0 * seconds_per_line)		// The frames this line will need.
+				val := note.Parameter
 
-			for ch, note := range line {
-
-				if note.Period != 0 {
-					if note.Sample != 0 {
-						last_sample_used[ch] = note.Sample
-					}
-					si := last_sample_used[ch]
-					if si != 0 {
-						modfile.Samples[si].MakeWav(note.Period)
-						source := modfile.Samples[si].Wav[note.Period]
-						wavs[ch].Replace(wav_frame, source, 0, source.FrameCount(), 0.25, 0)
-					}
+				if val == 0 {
+					info("WARNING: ignored tickrate 0")
+				} else if val <= 31 {
+					next_ticks_per_line = val
+					info("Set tickrate to %v", next_ticks_per_line)
+				} else {
+					next_bpm = val
+					info("Set bpm to %v", next_bpm)
 				}
 
-				// --------------------------------------------
+			}
 
-				if note.Effect == SET_SPEED {
+			if note.Effect == POSITION_JUMP {
 
-					val := note.Parameter
+				if note.Parameter > table_index {
+					position_jump_happening = true
+					position_jump_arg = note.Parameter
+				}
+				info("Saw note effect %d (value %d)", note.Effect, note.Parameter)
+				if note.Parameter <= table_index {
+					info("(but ignored due to probable infinite loop)")
+				}
+			}
 
-					if val == 0 {
-						info("WARNING: ignored tickrate 0")
-					} else if val <= 31 {
-						next_ticks_per_line = val
-						info("Set tickrate to %v", next_ticks_per_line)
+			if note.Effect == PATTERN_BREAK {
+				pattern_break_happening = true
+				pattern_break_arg = note.ParameterLeft() * 10 + note.ParameterRight()				// wat
+				info("Saw note effect %d (value %d)", note.Effect, pattern_break_arg)
+			}
+		}
+
+		// How long does this line last? We use the formula from modformat.txt (rev 4)
+
+		lines_per_minute := 24.0 * float32(so_called_bpm) / float32(ticks_per_line)
+		seconds_per_line := (1.0 / lines_per_minute) * 60.0
+		frames_needed := uint32(44100.0 * seconds_per_line)
+
+		// Set the value for each new frame in the output wavs...
+
+		for n := uint32(0); n < frames_needed; n++ {
+
+			wav_frame++
+
+			for ch := 0; ch < len(channels); ch++ {
+
+				if channels[ch].Period == 0 {
+					continue
+				}
+
+				sample := modfile.Samples[channels[ch].Sample]
+
+				if sample == nil || sample.Length < 2 {
+					continue
+				}
+
+				if n == 0 {
+					sample.MakeWav(channels[ch].Period)
+				}
+
+				sample_wav := sample.Wav[channels[ch].Period]
+
+				if channels[ch].SamplePosition >= sample_wav.FrameCount() {
+					if sample.RepLength > 1 {
+						channels[ch].SamplePosition = uint32(sample.RepOffset) * 2			// FIXME: sanity check this.
 					} else {
-						next_bpm = val
-						info("Set bpm to %v", next_bpm)
-					}
-
-				}
-
-				if note.Effect == POSITION_JUMP {
-
-					if note.Parameter > table_index {
-						position_jump_happening = true
-						position_jump_arg = note.Parameter
-					}
-					info("Saw note effect %d (value %d)", note.Effect, note.Parameter)
-					if note.Parameter <= table_index {
-						info("(but ignored due to probable infinite loop)")
+						channels[ch].Period = 0
+						continue
 					}
 				}
 
-				if note.Effect == PATTERN_BREAK {
-					pattern_break_happening = true
-					pattern_break_arg = note.ParameterLeft() * 10 + note.ParameterRight()				// wat
-					info("Saw note effect %d (value %d)\n", note.Effect, pattern_break_arg)
-				}
+				left, right := sample_wav.Get(channels[ch].SamplePosition)
+				wavs[ch].Set(wav_frame, left / 4.0, right / 4.0)
+
+				channels[ch].SamplePosition++
 			}
 		}
 
 		// -----
 
-		tick++
+		linenum++
+		ticks_per_line = next_ticks_per_line
+		so_called_bpm = next_bpm
 
-		// Until we implement effects, ticks are completely pointless, only lines (aka divisions) matter.
+		if pattern_break_happening {
+			table_index += 1
+			linenum = pattern_break_arg
+			pattern_break_happening = false
+			position_jump_happening = false
+		}
 
-		if tick >= ticks_per_line {
-
-			tick = 0
-			linenum++
-			ticks_per_line = next_ticks_per_line
-			so_called_bpm = next_bpm
-
-			if pattern_break_happening {
-				table_index += 1
-				linenum = pattern_break_arg
-				pattern_break_happening = false
-				position_jump_happening = false
-			}
-
-			if position_jump_happening {				// Can create infinite loops?
-				table_index = position_jump_arg
-				linenum = 0								// Presumably?
-				pattern_break_happening = false
-				position_jump_happening = false
-			}
+		if position_jump_happening {
+			table_index = position_jump_arg
+			linenum = 0
+			pattern_break_happening = false
+			position_jump_happening = false
 		}
 
 		if linenum >= 64 {
