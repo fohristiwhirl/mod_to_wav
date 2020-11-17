@@ -85,6 +85,9 @@ type Note struct {
 	Parameter		int
 }
 
+// Sometimes the parameter value is valid as is, but sometimes the left 4 and right 4 bits
+// have their own separate meanings...
+
 func (self *Note) ParameterLeft() int {
 	return self.Parameter >> 4
 }
