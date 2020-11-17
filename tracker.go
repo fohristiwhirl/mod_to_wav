@@ -565,7 +565,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 		channels = append(channels, new(Channel))
 	}
 
-	wav_frame := uint32(0)
+	output_frame := uint32(0)
 
 	ticks_per_line := 6
 	so_called_bpm := 125
@@ -655,7 +655,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 		for n := uint32(0); n < frames_needed; n++ {
 
-			wav_frame++
+			output_frame++
 
 			for ch := 0; ch < len(channels); ch++ {
 
@@ -685,7 +685,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 				}
 
 				left, right := sample_wav.Get(channels[ch].SamplePosition)
-				wavs[ch].Set(wav_frame, left / 4.0, right / 4.0)
+				wavs[ch].Set(output_frame, left / 4.0, right / 4.0)
 
 				channels[ch].SamplePosition++
 			}
@@ -718,7 +718,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 	}
 
-	truncated := w.New(wav_frame + 220500)
+	truncated := w.New(output_frame + 220500)
 
 	for ch := 0; ch < len(wavs); ch++ {
 		truncated.Add(0, wavs[ch], 0, truncated.FrameCount(), 1.0, 0)
