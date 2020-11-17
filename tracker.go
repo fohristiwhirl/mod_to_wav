@@ -70,7 +70,7 @@ func (self *Pattern) Print() {
 	for i := 0; i < len(self.Lines); i++ {
 		fmt.Printf("| ")
 		for ch := 0; ch < len(self.Lines[i]); ch++ {
-			fmt.Printf("%3v - %3v |", self.Lines[i][ch].Sample, self.Lines[i][ch].Period)
+			fmt.Printf("%3v - %3v (%2v: %4v) |", self.Lines[i][ch].Sample, self.Lines[i][ch].Period, self.Lines[i][ch].Effect, self.Lines[i][ch].Parameter)
 		}
 		fmt.Printf("\n")
 	}
@@ -193,6 +193,7 @@ func set_frame(wav *w.WAV, pos uint32, val int16) {
 // --------------------------------------------------------------------------------------------------
 
 const (
+	VOLUME_SLIDE = 10
 	POSITION_JUMP = 11
 	SET_VOLUME = 12
 	PATTERN_BREAK = 13
@@ -637,6 +638,21 @@ func generate_wav(modfile *Modfile) *w.WAV {
 				}
 
 				channels[ch].Volume = val
+			}
+
+			if note.Effect == VOLUME_SLIDE {		// FIXME: should happen over multiple ticks
+
+				if note.ParameterLeft() > 0 {
+					channels[ch].Volume += note.ParameterLeft()
+					if channels[ch].Volume > 64 {
+						channels[ch].Volume = 64
+					}
+				} else {
+					channels[ch].Volume -= note.ParameterRight()
+					if channels[ch].Volume < 0 {
+						channels[ch].Volume = 0
+					}
+				}
 			}
 
 			if note.Effect == POSITION_JUMP {
