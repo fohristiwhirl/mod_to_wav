@@ -685,7 +685,12 @@ func generate_wav(modfile *Modfile) *w.WAV {
 				}
 
 				left, right := sample_wav.Get(channels[ch].SamplePosition)
-				wavs[ch].Set(output_frame, left / 4.0, right / 4.0)
+
+				if ch % 4 == 2 || ch % 4 == 3 {
+					wavs[ch].Set(output_frame, left / 8.0, right / 4.0)
+				} else {
+					wavs[ch].Set(output_frame, left / 4.0, right / 8.0)
+				}
 
 				channels[ch].SamplePosition++
 			}
