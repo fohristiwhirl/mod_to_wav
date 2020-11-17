@@ -194,6 +194,7 @@ func set_frame(wav *w.WAV, pos uint32, val int16) {
 
 const (
 	POSITION_JUMP = 11
+	SET_VOLUME = 12
 	PATTERN_BREAK = 13
 	SET_SPEED = 15
 )
@@ -605,6 +606,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 				channels[ch].SamplePosition = 0
 				if note.Sample != 0 {
 					channels[ch].Sample = note.Sample
+					channels[ch].Volume = modfile.Samples[note.Sample].Volume
 				}
 			}
 
@@ -624,6 +626,17 @@ func generate_wav(modfile *Modfile) *w.WAV {
 					info("Set bpm to %v", next_bpm)
 				}
 
+			}
+
+			if note.Effect == SET_VOLUME {
+
+				val := note.Parameter
+
+				if val > 64 {
+					val = 64
+				}
+
+				channels[ch].Volume = val
 			}
 
 			if note.Effect == POSITION_JUMP {
@@ -686,11 +699,18 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 				left, right := sample_wav.Get(channels[ch].SamplePosition)
 
+				left = int16(float64(left) * float64(channels[ch].Volume) / 64.0)
+				right = int16(float64(right) * float64(channels[ch].Volume) / 64.0)
+
 				if ch % 4 == 2 || ch % 4 == 3 {
-					wavs[ch].Set(output_frame, left / 8.0, right / 4.0)
+					left /= 8
+					right /= 4
 				} else {
-					wavs[ch].Set(output_frame, left / 4.0, right / 8.0)
+					left /= 4
+					right /= 8
 				}
+
+				wavs[ch].Set(output_frame, left, right)
 
 				channels[ch].SamplePosition++
 			}
