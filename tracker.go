@@ -718,7 +718,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 				left = int16(float64(left) * float64(channels[ch].Volume) / 64.0)
 				right = int16(float64(right) * float64(channels[ch].Volume) / 64.0)
 
-				if ch % 4 == 2 || ch % 4 == 3 {
+				if ch % 4 == 1 || ch % 4 == 2 {
 					left /= 8
 					right /= 4
 				} else {
