@@ -706,7 +706,7 @@ func generate_wav(modfile *Modfile) *w.WAV {
 
 				if channels[ch].SamplePosition >= sample_wav.FrameCount() {
 					if sample.RepLength > 1 {
-						channels[ch].SamplePosition = uint32(sample.RepOffset) * 2			// FIXME: sanity check this.
+						channels[ch].SamplePosition = uint32(sample.RepOffset) * 2			// FIXME: this can't be right, RepOffset is for file sample while SamplePosition is for 44100 sample.
 					} else {
 						channels[ch].Period = 0
 						continue
