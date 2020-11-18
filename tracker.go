@@ -1,5 +1,9 @@
 package main
 
+// TODO: do away with the 44100 wav samples and just advance the location in the active sample
+// by an amount that corresponds to the period. When making the final wav, for ach frame, find
+// the right value to add more-or-less directly from the original sample.
+
 import (
 	"bufio"
 	"fmt"
